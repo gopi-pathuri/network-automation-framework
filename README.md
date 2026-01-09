@@ -142,19 +142,11 @@ ansible-playbook config_drift_detection.yml --tags report
 ```
 backups/
 ├── 192.168.1.1/
-│   ├── switch1_running_20260109_153045.cfg
-│   ├── switch1_facts_20260109_153045.json
-│   └── switch1_interfaces_20260109_153045.json
-
+    └── switch1_interfaces_timestamp.json
 reports/
-├── switch1_vlans_2026-01-09.txt
-└── switch1_drift_2026-01-09.txt
-
+└── switch1_drift_timestamp.txt
 drift_reports/
-├── switch1_drift_2026-01-09.txt
-├── switch1_sections_2026-01-09.txt
-└── SUMMARY_2026-01-09.txt
-```
+└── SUMMARY_timestamp.txt```
 
 ## 🔧 Configuration Files
 
