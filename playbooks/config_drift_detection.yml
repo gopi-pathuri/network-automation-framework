@@ -1,0 +1,202 @@
+---
+# Ansible Playbook for Configuration Drift Detection
+# Author: Network Automation Team
+# Description: Detects configuration drift across network devices
+
+- name: Configuration Drift Detection
+  hosts: all
+  gather_facts: no
+  connection: network_cli
+  
+  vars:
+    baseline_dir: "./baseline_configs"
+    current_dir: "./current_configs"
+    drift_report_dir: "./drift_reports"
+    baseline_date: "{{ lookup('env', 'BASELINE_DATE') | default('latest', true) }}"
+  
+  tasks:
+    - name: Create necessary directories
+      file:
+        path: "{{ item }}"
+        state: directory
+      loop:
+        - "{{ current_dir }}"
+        - "{{ drift_report_dir }}"
+      delegate_to: localhost
+      run_once: true
+      tags:
+        - setup
+    
+    - name: Display drift detection information
+      debug:
+        msg: "Checking configuration drift for {{ inventory_hostname }}"
+    
+    - name: Get current running configuration
+      ios_command:
+        commands:
+          - show running-config
+      register: current_config
+      tags:
+        - collect
+    
+    - name: Save current configuration to file
+      copy:
+        content: "{{ current_config.stdout[0] }}"
+        dest: "{{ current_dir }}/{{ inventory_hostname }}_{{ ansible_date_time.date }}.cfg"
+      delegate_to: localhost
+      tags:
+        - collect
+    
+    - name: Check if baseline configuration exists
+      stat:
+        path: "{{ baseline_dir }}/{{ inventory_hostname }}_baseline.cfg"
+      register: baseline_exists
+      delegate_to: localhost
+      tags:
+        - compare
+    
+    - name: Create baseline if it doesn't exist
+      copy:
+        content: "{{ current_config.stdout[0] }}"
+        dest: "{{ baseline_dir }}/{{ inventory_hostname }}_baseline.cfg"
+      delegate_to: localhost
+      when: not baseline_exists.stat.exists
+      tags:
+        - baseline
+    
+    - name: Read baseline configuration
+      slurp:
+        path: "{{ baseline_dir }}/{{ inventory_hostname }}_baseline.cfg"
+      register: baseline_config
+      delegate_to: localhost
+      when: baseline_exists.stat.exists
+      tags:
+        - compare
+    
+    - name: Compare configurations and detect drift
+      set_fact:
+        config_drift: "{{ (current_config.stdout[0] | hash('sha256')) != (baseline_config.content | b64decode | hash('sha256')) }}"
+      when: baseline_exists.stat.exists
+      tags:
+        - compare
+    
+    - name: Display drift status
+      debug:
+        msg: >
+          {% if config_drift | default(false) %}
+          WARNING: Configuration drift detected on {{ inventory_hostname }}!
+          {% else %}
+          Configuration on {{ inventory_hostname }} matches baseline.
+          {% endif %}
+      when: baseline_exists.stat.exists
+      tags:
+        - compare
+    
+    - name: Generate detailed diff report
+      copy:
+        content: |
+          Configuration Drift Report
+          ==========================
+          Device: {{ inventory_hostname }}
+          Date: {{ ansible_date_time.iso8601 }}
+          Drift Detected: {{ config_drift | default('N/A') }}
+          
+          Current Configuration Hash: {{ current_config.stdout[0] | hash('sha256') }}
+          Baseline Configuration Hash: {{ baseline_config.content | b64decode | hash('sha256') if baseline_exists.stat.exists else 'N/A' }}
+          
+          {% if config_drift | default(false) %}
+          ACTION REQUIRED: Review configuration changes
+          {% else %}
+          STATUS: Configuration compliant with baseline
+          {% endif %}
+        dest: "{{ drift_report_dir }}/{{ inventory_hostname }}_drift_{{ ansible_date_time.date }}.txt"
+      delegate_to: localhost
+      when: baseline_exists.stat.exists
+      tags:
+        - report
+    
+    - name: Get key configuration sections for detailed comparison
+      ios_command:
+        commands:
+          - show running-config | section interface
+          - show running-config | section router
+          - show running-config | section vlan
+          - show running-config | section access-list
+      register: config_sections
+      tags:
+        - detailed
+    
+    - name: Save detailed configuration sections
+      copy:
+        content: |
+          Interface Configuration:
+          {{ config_sections.stdout[0] }}
+          
+          Routing Configuration:
+          {{ config_sections.stdout[1] }}
+          
+          VLAN Configuration:
+          {{ config_sections.stdout[2] }}
+          
+          Access-List Configuration:
+          {{ config_sections.stdout[3] }}
+        dest: "{{ drift_report_dir }}/{{ inventory_hostname }}_sections_{{ ansible_date_time.date }}.txt"
+      delegate_to: localhost
+      when: config_drift | default(false)
+      tags:
+        - detailed
+
+- name: Generate Summary Report
+  hosts: localhost
+  gather_facts: no
+  
+  vars:
+    drift_report_dir: "./drift_reports"
+  
+  tasks:
+    - name: Find all drift reports
+      find:
+        paths: "{{ drift_report_dir }}"
+        patterns: "*_drift_*.txt"
+      register: drift_files
+      tags:
+        - summary
+    
+    - name: Count devices with drift
+      set_fact:
+        total_devices: "{{ groups['all'] | length }}"
+      tags:
+        - summary
+    
+    - name: Display summary
+      debug:
+        msg: |
+          ====================================
+          Configuration Drift Detection Summary
+          ====================================
+          Total Devices Scanned: {{ total_devices }}
+          Reports Generated: {{ drift_files.matched }}
+          Report Directory: {{ drift_report_dir }}
+          
+          Review individual device reports for detailed information.
+      tags:
+        - summary
+    
+    - name: Create consolidated report
+      copy:
+        content: |
+          Network Configuration Drift Detection Report
+          ============================================
+          Scan Date: {{ ansible_date_time.iso8601 }}
+          Total Devices: {{ total_devices }}
+          
+          Reports are available in: {{ drift_report_dir }}
+          
+          Next Steps:
+          1. Review individual device drift reports
+          2. Identify unauthorized configuration changes
+          3. Take corrective action as needed
+          4. Update baselines if changes are approved
+        dest: "{{ drift_report_dir }}/SUMMARY_{{ ansible_date_time.date }}.txt"
+      tags:
+        - summary
