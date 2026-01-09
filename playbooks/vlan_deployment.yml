@@ -1,0 +1,114 @@
+---
+# Ansible Playbook for VLAN Deployment
+# Author: Network Automation Team
+# Description: Standardizes VLAN configuration across switching environment
+
+- name: Deploy VLANs to Network Switches
+  hosts: switches
+  gather_facts: no
+  connection: network_cli
+  
+  vars:
+    # Define VLANs to be deployed
+    vlans:
+      - vlan_id: 10
+        name: "MANAGEMENT"
+        state: present
+      - vlan_id: 20
+        name: "ENGINEERING"
+        state: present
+      - vlan_id: 30
+        name: "SALES"
+        state: present
+      - vlan_id: 40
+        name: "GUEST"
+        state: present
+      - vlan_id: 50
+        name: "SERVERS"
+        state: present
+    
+    # Backup configuration before changes
+    backup_enabled: yes
+    backup_dir: "./backups"
+  
+  tasks:
+    - name: Display playbook information
+      debug:
+        msg: "Starting VLAN deployment on {{ inventory_hostname }}"
+    
+    - name: Backup current configuration
+      ios_config:
+        backup: yes
+        backup_options:
+          filename: "{{ inventory_hostname }}_{{ ansible_date_time.date }}.cfg"
+          dir_path: "{{ backup_dir }}"
+      when: backup_enabled
+      tags:
+        - backup
+    
+    - name: Create VLANs on Cisco switches
+      ios_vlan:
+        vlan_id: "{{ item.vlan_id }}"
+        name: "{{ item.name }}"
+        state: "{{ item.state }}"
+      loop: "{{ vlans }}"
+      register: vlan_result
+      tags:
+        - vlan_config
+    
+    - name: Display VLAN creation results
+      debug:
+        msg: "VLAN {{ item.item.vlan_id }} ({{ item.item.name }}) configured successfully"
+      loop: "{{ vlan_result.results }}"
+      when: item.changed
+      tags:
+        - vlan_config
+    
+    - name: Configure trunk ports (example)
+      ios_l2_interface:
+        name: "{{ item }}"
+        mode: trunk
+        trunk_allowed_vlans: "10,20,30,40,50"
+      loop:
+        - GigabitEthernet0/1
+        - GigabitEthernet0/2
+      when: configure_trunks | default(false)
+      tags:
+        - trunk_config
+    
+    - name: Verify VLAN configuration
+      ios_command:
+        commands:
+          - show vlan brief
+      register: vlan_output
+      tags:
+        - verify
+    
+    - name: Save VLAN verification output
+      copy:
+        content: "{{ vlan_output.stdout[0] }}"
+        dest: "./reports/{{ inventory_hostname }}_vlans_{{ ansible_date_time.date }}.txt"
+      delegate_to: localhost
+      tags:
+        - verify
+    
+    - name: Display VLAN verification
+      debug:
+        var: vlan_output.stdout_lines[0]
+      tags:
+        - verify
+    
+    - name: Save running configuration
+      ios_config:
+        save_when: modified
+      tags:
+        - save
+
+- name: Generate deployment report
+  hosts: localhost
+  gather_facts: no
+  
+  tasks:
+    - name: Create deployment summary
+      debug:
+        msg: "VLAN deployment completed for all switches. Check reports directory for details."
