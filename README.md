@@ -221,7 +221,6 @@ This project is open source and available for educational and professional use.
 
 Gopi Pathuri
 - GitHub: [@gopi-pathuri](https://github.com/gopi-pathuri)
-- LinkedIn: [Gopi Pathuri](https://www.linkedin.com/in/gopi-pathuri)
 
 ## 🙏 Acknowledgments
 
